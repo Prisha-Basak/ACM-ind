@@ -23,12 +23,12 @@ import random
 
 # Lazy imports and installation helper
 try:
-    from transformers import AutoModelForCausalLM, AutoTokenizer, Conversation, pipeline
+    from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 except Exception:
     st.write("Installing required packages. Please wait — this may take a minute.")
     import subprocess, sys
     subprocess.check_call([sys.executable, "-m", "pip", "install", "transformers", "torch", "emoji", "--quiet"]) 
-    from transformers import AutoModelForCausalLM, AutoTokenizer, Conversation, pipeline
+    from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 try:
     import emoji
@@ -117,7 +117,6 @@ def to_emoji(text):
         if key in EMOJI_MAP:
             out.append(emoji.emojize(EMOJI_MAP[key], language='alias'))
         else:
-            # try to break into characters for emphasis
             out.append(w)
     return ' '.join(out)
 
@@ -138,11 +137,9 @@ with st.sidebar:
         st.session_state.clear()
         st.experimental_rerun()
 
-# Initialize session state for history and conversation object
+# Initialize session state for history
 if 'history' not in st.session_state:
     st.session_state['history'] = []  # list of (role, text, time)
-if 'conv' not in st.session_state:
-    st.session_state['conv'] = None  # transformers.Conversation
 
 # Display chat history
 chat_container = st.container()
@@ -164,9 +161,7 @@ if user_input:
     # Append user message to history
     st.session_state['history'].append(('user', user_input, timestamp()))
 
-    # Keep history length manageable
-    recent = [h for h in st.session_state['history'] if h[0] in ('user','bot')]
-    # Build persona-instructed user message to the model
+    # Persona instruction
     persona_instruction = ''
     if persona == 'RoastBot':
         persona_instruction = "You are RoastBot. Always answer with a witty, sarcastic roast aimed playfully at the user.\n"
@@ -175,7 +170,7 @@ if user_input:
     elif persona == 'Emoji Translator':
         persona_instruction = "You are Emoji Translator Bot. Concisely translate the user's message into emoji-rich text.\n"
 
-    # Combine last few turns into a single prompt for better context
+    # Combine last few turns into a single prompt
     turns_to_include = [t for t in st.session_state['history'] if t[0] in ('user','bot')][-max_history*2:]
     prompt_parts = [persona_instruction]
     for role, text, _ in turns_to_include:
@@ -186,13 +181,14 @@ if user_input:
     prompt_parts.append(f"User: {user_input}\nBot:")
     model_input = "\n".join(prompt_parts)
 
-    # Use transformers conversational pipeline
-    conv = Conversation(model_input)
-    st.session_state['conv'] = conv
+    # Use transformers conversational pipeline directly with text
     with st.spinner("Generating..."):
         try:
-            output_conv = conv_pipeline(conv)
-            bot_raw = output_conv.generated_responses[-1] if output_conv.generated_responses else "I have nothing to say."
+            response = conv_pipeline(model_input, pad_token_id=conv_pipeline.tokenizer.eos_token_id)
+            if isinstance(response, list) and len(response) > 0:
+                bot_raw = response[0]['generated_text']
+            else:
+                bot_raw = "I have nothing to say."
         except Exception as e:
             bot_raw = "(model error) " + str(e)
 
@@ -201,10 +197,8 @@ if user_input:
         roast_prefix = make_roast(user_input)
         bot_display = f"**{roast_prefix}**  \n\n{bot_raw}"
     elif persona == 'ShakespeareBot':
-        # We'll try to transform the model output further
         bot_display = to_shakespeare(bot_raw)
     elif persona == 'Emoji Translator':
-        # prefer to emoji-translate the user_input rather than model output
         bot_display = to_emoji(user_input)
     else:
         bot_display = bot_raw
@@ -218,4 +212,3 @@ if user_input:
 # Footer / usage notes
 st.markdown("---")
 st.markdown("**Notes:** This demo uses the `microsoft/DialoGPT-medium` model via Hugging Face transformers.\n\nIf the model or dependencies take long to download the first time, please be patient. The conversation persists while the Streamlit app runs.\n")
-
